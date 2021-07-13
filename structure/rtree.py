@@ -1,22 +1,22 @@
 from __future__ import annotations
-from math import prod
-
+from math import prod,log,ceil
+import json
 
 class MinimumBoundingRectangle:
     sections: tuple[tuple[float]] | None
     number_of_dimensions: int
     identifier: str | None
-    child : Node | None
+    child: Node | None
     node: Node | None
 
-    def __init__(self, number_of_dimensions: int, sections: tuple[tuple[float]] | None = None, identifier: str | None = None,child : Node | None = None) -> None:
+    def __init__(self, number_of_dimensions: int, sections: tuple[tuple[float]] | None = None, identifier: str | None = None, child: Node | None = None) -> None:
         self.sections = sections
         self.number_of_dimensions = number_of_dimensions
         self.identifier = identifier
         if child != None:
             self.child = child
             self.adjustToMBRs(child.mbrs)
-        else :
+        else:
             self.child = None
     # MBRが別のMBRを覆っているか判定する
 
@@ -46,15 +46,15 @@ class MinimumBoundingRectangle:
     # 矩形を引数のMBRに対応するMBRにする
 
     def adjustToMBRs(self, mbrs: list[MinimumBoundingRectangle]) -> None:
-        self.sections = ((min([mbr.sections[i][0] for mbr in mbrs if mbr.sections != None]), max(
-            [mbr.sections[i][1] for mbr in mbrs if mbr.sections != None])) for i in range(self.number_of_dimensions))
+        self.sections = tuple([(min([mbr.sections[i][0] for mbr in mbrs if mbr.sections != None]), max(
+            [mbr.sections[i][1] for mbr in mbrs if mbr.sections != None])) for i in range(self.number_of_dimensions)])
         return
 
     def adjustToMBR(self, mbr: MinimumBoundingRectangle) -> None:
         if mbr.sections == None:
             return
         if self.sections == None:
-            self.sections = tuple([ (a,b) for a,b in mbr.sections])
+            self.sections = tuple([(a, b) for a, b in mbr.sections])
 
         self.sections = tuple([(min(mbr.sections[i][0], self.sections[i][0]), max(
             mbr.sections[i][1], self.sections[i][1])) for i in range(self.number_of_dimensions)])
@@ -80,23 +80,26 @@ class MinimumBoundingRectangle:
         elif self.sections == None:
             return None
         expanded_sections = []
-        expanded_sections = ((min(mbr.sections[i][0], self.sections[i][0]), max(mbr.sections[i][1], self.sections[i][1])) for i in range(self.number_of_dimensions))
+        expanded_sections = ((min(mbr.sections[i][0], self.sections[i][0]), max(
+            mbr.sections[i][1], self.sections[i][1])) for i in range(self.number_of_dimensions))
         return prod([b - a for a, b in expanded_sections]) - prod([b - a for a, b in self.sections])
+
 
 class Node:
     parent_mbr: MinimumBoundingRectangle | None
-    parent_node : Node
+    parent_node: Node
     mbrs: list[MinimumBoundingRectangle]
     maximum_node_records: int
     minimum_node_records: int
     number_of_dimensions: int
 
-    def __init__(self,mbrs: list[MinimumBoundingRectangle] = [],parent_node : Node | None = None,parent_mbr: MinimumBoundingRectangle | None = None) -> None:
+    def __init__(self, parent_node: Node  | None , parent_mbr: MinimumBoundingRectangle | None,mbrs: list[MinimumBoundingRectangle] = []) -> None:
         self.mbrs = mbrs
         self.parent_mbr = parent_mbr
         self.parent_node = parent_node
+        print(self)
 
-    def append(self,mbr: MinimumBoundingRectangle) -> None:
+    def append(self, mbr: MinimumBoundingRectangle) -> None:
         self.mbrs.append(mbr)
         return
 
@@ -106,83 +109,127 @@ class Node:
                 return False
         return True
 
+
 class Rtree:
 
     root: Node
     maximum_node_records: int
     minimum_node_records: int
     number_of_dimensions: int
-    algorithm : str
+    algorithm: str
 
-    def __init__(self, maximum_node_records: int, minimum_node_records: int = 1, number_of_dimensions: int = 1, algorithm : str = 'quadratic') -> None:
-        self.root = Node()
+    def __init__(self, maximum_node_records: int, minimum_node_records: int = 1, number_of_dimensions: int = 1, algorithm: str = 'quadratic') -> None:
+        self.root = Node(parent_node=None,parent_mbr=None)
         self.maximum_node_records = maximum_node_records
         self.minimum_node_records = max(
             minimum_node_records, maximum_node_records//2)
         self.number_of_dimensions = number_of_dimensions
         self.algorithm = algorithm
 
+    def all(self):
+        tree = {}
+        stock: list[MinimumBoundingRectangle] = [mbr for mbr in self.root.mbrs]
+        while len(stock) > 0:
+            mbr: MinimumBoundingRectangle = stock.pop(-1)
+            node: Node = mbr.child
+            if node == None:
+                tree[mbr] = None
+                continue
+            if node.isLeaf():
+                tree[node] = node.mbrs
+            else:
+                tree[node] = {mbr: None for mbr in node.mbrs}
+                stock += [mbr for mbr in node.mbrs]
+        return tree
+
+    def json(self):
+        tree = {}
+        stock: list[MinimumBoundingRectangle] = self.root.mbrs
+        while len(stock) > 0:
+            mbr: MinimumBoundingRectangle = stock.pop(-1)
+            node: Node = mbr.child
+            if node == None:
+                tree[str(mbr)] = 'leaf'
+                continue
+            if node.isLeaf():
+                tree[str(node)] = [str(mbr) for mbr in node.mbrs]
+            else:
+                tree[str(node)] = {str(mbr): 'leaf' for mbr in node.mbrs}
+                stock += node.mbrs
+        return json.dumps(tree)
 
     # 新しい矩形を挿入
 
     def insert(self, mbr: MinimumBoundingRectangle) -> None:
-        node: Node = self.__chooseLeafToInsert(mbr,self.root)
+        node: Node = self.__chooseLeafToInsert(mbr, self.root)
         node.append(mbr)
         if len(node.mbrs) == self.maximum_node_records:
-            group1,group2 = self.__spliteNode(node)
+            group1, group2 = self.__spliteNode(node)
             node.mbrs = group1
-            new_node = Node(mbrs=group2)
-            self.__adjustTreeToInsert(node,splited_node= new_node)
-        else :
+            new_node = Node(parent_node=node.parent_node,parent_mbr=node.parent_mbr,mbrs=group2)
+            self.__adjustTreeToInsert(node, splited_node=new_node)
+        else:
             self.__adjustTreeToInsert(node)
         return
 
     # 新たな矩形を挿入した後に，その矩形に対応するように内部ノードの矩形を拡張する
     def __adjustTreeToInsert(self, node: Node, splited_node: Node | None = None) -> None:
         if self.root == node:
+            print('height += 1!')
+            if splited_node != None:
+                new_mbr1 = MinimumBoundingRectangle(self.number_of_dimensions,child=node)
+                new_mbr2 = MinimumBoundingRectangle(self.number_of_dimensions,child=splited_node)
+                new_node = Node(parent_node= None,parent_mbr=None,mbrs=[new_mbr1,new_mbr2])
+                node.parent_mbr = new_mbr1
+                splited_node.parent_mbr = new_mbr2
+                node.parent_node = new_node
+                splited_node.parent_node = new_node
+                self.root = new_node
             return
-
         node.parent_mbr.adjustToMBRs(node.mbrs)
-        
 
         if splited_node != None:
-            parent_mbr = MinimumBoundingRectangle(self.number_of_dimensions,child=splited_node)
+            parent_mbr = MinimumBoundingRectangle(
+                self.number_of_dimensions, child=splited_node)
             splited_node.parent_node = node.parent_node
             splited_node.parent_mbr = parent_mbr
             node.parent_node.append(parent_mbr)
-            if len(node.parent_node.mbrs) > self.maximum_node_records:
-                mbrs1,mbrs2 = self.__spliteNode(node.parent_node)
-                node.parent_mbr.child = mbrs1
-                new_node = Node(mbrs=mbrs2)
-                if node.parent_mbr in mbrs2:
-                    node.parent_node = new_node
-                if splited_node.parent_mbr in mbrs2:
-                    splited_node.parent_node = new_node
-                self.__adjustTreeToInsert(node.parent_node,splited_node=new_node)
+            if len(node.parent_node.mbrs) >= self.maximum_node_records:
+                mbrs1, mbrs2 = self.__spliteNode(node.parent_node)
+                # node.parent_mbr.child = node
+                new_node = Node(parent_node=node.parent_node,parent_mbr=node.parent_mbr,mbrs=mbrs2)
+                for mbr in mbrs1:
+                    mbr.child.parent_node = node.parent_node
+                    mbr.child.parent_mbr = mbr
+                for mbr in mbrs2:
+                    mbr.child.parent_node = new_node
+                    mbr.child.parent_mbr = mbr
+                self.__adjustTreeToInsert(
+                    node.parent_node, splited_node=new_node)
 
-        return  self.__adjustTreeToInsert(node.parent_node)
-
+        return self.__adjustTreeToInsert(node.parent_node)
 
     # 矩形を挿入する葉を選択
+
     def __chooseLeafToInsert(self, mbr: MinimumBoundingRectangle, node: Node) -> Node:
         if node.isLeaf():
             return node
-        mbrs_sorted_by_area : list[MinimumBoundingRectangle] = sorted(
+        mbrs_sorted_by_area: list[MinimumBoundingRectangle] = sorted(
             node.mbrs, key=lambda mbr_of_node: mbr_of_node.area())
-        mbrs_sorted_by_overflow : list[MinimumBoundingRectangle] = sorted(
+        mbrs_sorted_by_overflow: list[MinimumBoundingRectangle] = sorted(
             mbrs_sorted_by_area, key=lambda mbr_of_node: mbr.overflow(mbr_of_node))
-        next_node : Node = mbrs_sorted_by_overflow[0].child
+        next_node: Node = mbrs_sorted_by_overflow[0].child
         return self.__chooseLeafToInsert(mbr, next_node)
 
-    def __spliteNode(self, node : Node) -> tuple[Node]:
+    def __spliteNode(self, node: Node) -> tuple[list[MinimumBoundingRectangle]]:
         if self.algorithm == 'quadratic':
             result = self.__quadraticSplit(node)
 
         return result
 
     def __quadraticSplit(self, node: Node) -> tuple[list[MinimumBoundingRectangle]]:
-        
-        grouped_indexes: list[bool] = [False]*self.maximum_node_records
+
+        grouped_indexes: list[bool] = [False]*len(node.mbrs)
         index1, index2 = self.__quadraticPickSeeds(node.mbrs)
 
         # node1 = Node(parent_node=node.parent_node,parent_mbr=node.parent_mbr)
@@ -192,13 +239,14 @@ class Rtree:
         group2_mbr = MinimumBoundingRectangle(self.number_of_dimensions)
         group1_mbr.adjustToMBR(node.mbrs[index1])
         group2_mbr.adjustToMBR(node.mbrs[index2])
-        
+
         group1: list[MinimumBoundingRectangle] = [node.mbrs[index1]]
         group2: list[MinimumBoundingRectangle] = [node.mbrs[index2]]
         grouped_indexes[index1] = True
         grouped_indexes[index2] = True
         while len(group1) < self.minimum_node_records and len(group2) < self.minimum_node_records:
-            mbr_index = self.__pickNext([node.mbrs[i] for i,isGrouped in enumerate(grouped_indexes) if not(isGrouped)], group1_mbr, group2_mbr)
+            mbr_index = self.__pickNext([node.mbrs[i] for i, isGrouped in enumerate(
+                grouped_indexes) if not(isGrouped)], group1_mbr, group2_mbr)
             grouped_indexes[mbr_index] = True
             cost1 = group1_mbr.costToCover(node.mbrs[mbr_index])
             cost2 = group2_mbr.costToCover(node.mbrs[mbr_index])
@@ -216,7 +264,7 @@ class Rtree:
         else:
             group2 += [node.mbrs[index] for index,
                        isGrouped in enumerate(grouped_indexes) if not(isGrouped)]
-        return (group1,group2)
+        return (group1, group2)
 
     def __pickNext(self, mbrs: list[MinimumBoundingRectangle], group1: MinimumBoundingRectangle, group2: MinimumBoundingRectangle) -> int:
         maximum_difference: int = 0
@@ -253,8 +301,8 @@ class Rtree:
 
         return
 
-
     # あるMBRを覆うMBRを持つノードのの集合を返す
+
     def search(self, mbr: MinimumBoundingRectangle, node: Node = None) -> set[Node]:
         if node == None:
             node = self.root
@@ -272,11 +320,11 @@ class Rtree:
                 if internal_mbr.isOverlaping(mbr):
                     overlapping_mbrs = overlapping_mbrs | self.search(
                         mbr, node=internal_mbr.child)
-        print(node)
+        print(node.mbrs)
         return overlapping_mbrs
 
     def delete(self, mbr: MinimumBoundingRectangle):
-        target = self.__findLeafToDelete(mbr,self.root)
+        target = self.__findLeafToDelete(mbr, self.root)
         if target == None:
             raise IndexError
         leaf, internal_index = target
@@ -309,14 +357,72 @@ class Rtree:
                     self.insert(mbr)
         else:
             if len(node.mbrs) < self.minimum_node_records:
-                parent_mbr_index : int = next([i for i,mbr in enumerate(node.parent_mbr) if node.parent_mbr.equals(mbr)])
-                deleted_internal_mbr =  node.parent_node.pop(parent_mbr_index)
+                parent_mbr_index: int = next([i for i, mbr in enumerate(
+                    node.parent_mbr) if node.parent_mbr.equals(mbr)])
+                deleted_internal_mbr = node.parent_node.pop(parent_mbr_index)
                 del deleted_internal_mbr
-                self.__codenseTree(node.parent_node,eliminated_nodes=node.mbrs)
+                self.__codenseTree(
+                    node.parent_node, eliminated_nodes=node.mbrs)
 
             else:
                 node.parent_mbr.adjust(self.tree[node])
-                self.__codenseTree(node.parent_node,eliminated_nodes=eliminated_nodes)
+                self.__codenseTree(
+                    node.parent_node, eliminated_nodes=eliminated_nodes)
 
         return
 
+    # TSGに基づく整理を行う
+    def bulkLoad(self,rectangles: list[MinimumBoundingRectangle]):
+        sorted_rectangles: list[list[MinimumBoundingRectangle]] = []
+        for i in range(self.number_of_dimensions):
+            for j in range(2):
+                sorted_rectangles.append(sorted(rectangles,key=lambda rectangle:rectangle.sections[i][j]))
+        height: float = max(0,ceil(log(self.maximum_node_records,len(rectangles))))
+        return self.bulkLoadChunk(sorted_rectangles,height)
+
+    def bulkLoadChunk(self,sorted_rectangles: list[list[MinimumBoundingRectangle]], height: float):
+        if height == 0:
+            return self.buildLeafNode(sorted_rectangles[0])
+        else :
+            # 現在見ている木の葉に入るレコートの数
+            m = self.maximum_node_records**height
+            partitions = self.tgsPartitions(sorted_rectangles,m)
+            new_sorted_rectangles = []
+            for partition in partitions:
+                new_sorted_rectangles.append(self.bulkLoadChunk(partition,height-1))
+        return self.buildNonLeafNode(new_sorted_rectangles)
+
+
+    def buildLeafNode(self,rectangles: list[MinimumBoundingRectangle]):
+        return
+
+    def buildNonLeafNode(self,rectangles: list[MinimumBoundingRectangle]):
+        return
+
+    def tgsPartitions(self,sorted_rectangles: list[list[MinimumBoundingRectangle]],number_of_records:int):
+        if len(sorted_rectangles[0]) < number_of_records:
+            return sorted_rectangles
+        l,h = self.bestBinarySplit(sorted_rectangles,number_of_records)
+        return (self.tgsPartitions(l,number_of_records),self.tgsPartitions(h,number_of_records))
+
+    def bestBinarySplit(self,sorted_rectangles: list[list[MinimumBoundingRectangle]],number_of_records:int):
+        number_of_partitions: int = ceil(len(sorted_rectangles[0])/number_of_records)
+        minimum_cost = float('inf')
+        best_sort_order = None
+
+        for s in range(self.number_of_dimensions*2):
+            f,b = self.computeBoundingBoxes(sorted_rectangles[s],number_of_records)
+            for i in range(number_of_partitions-1):
+                # 引数なにこれ
+                cost = self.tgsCost(f,b)
+                if cost < minimum_cost:
+                    minimum_cost = cost
+                    
+        return
+
+
+    def computeBoundingBoxes(self,rectangles: list[MinimumBoundingRectangle],number_of_records:int):
+        return
+
+    def tgsCost(self):
+        return
